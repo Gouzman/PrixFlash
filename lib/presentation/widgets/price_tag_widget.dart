@@ -7,10 +7,22 @@ class PriceTagWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = Color(
-      int.parse(tag.backgroundColor.replaceAll('#', '0xff')),
-    );
-    final textColor = Color(int.parse(tag.textColor.replaceAll('#', '0xff')));
+    // Fonction pour parser les couleurs en toute sécurité
+    Color parseColor(String hexColor, Color defaultColor) {
+      try {
+        String cleanHex = hexColor.replaceAll('#', '');
+        // Vérifier que la couleur a 6 caractères hexadécimaux
+        if (cleanHex.length == 6 && RegExp(r'^[0-9A-Fa-f]+$').hasMatch(cleanHex)) {
+          return Color(int.parse('0xff$cleanHex'));
+        }
+        return defaultColor;
+      } catch (e) {
+        return defaultColor;
+      }
+    }
+
+    final bgColor = parseColor(tag.backgroundColor, Colors.white);
+    final textColor = parseColor(tag.textColor, Colors.black);
 
     return Container(
       width: double.infinity,
@@ -37,7 +49,7 @@ class PriceTagWidget extends StatelessWidget {
             style: TextStyle(
               fontSize: 16,
               decoration: TextDecoration.lineThrough,
-              color: textColor.withOpacity(0.6),
+              color: textColor.withValues(alpha: 0.6),
             ),
           ),
           Text(
