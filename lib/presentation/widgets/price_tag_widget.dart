@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../domain/models/price_tag_model.dart';
+import 'price_tag_square.dart';
+import 'price_tag_hanging.dart';
+import 'price_tag_ribbon.dart';
 
 class PriceTagWidget extends StatelessWidget {
   final PriceTag tag;
@@ -7,61 +10,15 @@ class PriceTagWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Fonction pour parser les couleurs en toute sécurité
-    Color parseColor(String hexColor, Color defaultColor) {
-      try {
-        String cleanHex = hexColor.replaceAll('#', '');
-        // Vérifier que la couleur a 6 caractères hexadécimaux
-        if (cleanHex.length == 6 && RegExp(r'^[0-9A-Fa-f]+$').hasMatch(cleanHex)) {
-          return Color(int.parse('0xff$cleanHex'));
-        }
-        return defaultColor;
-      } catch (e) {
-        return defaultColor;
-      }
+    // Switch pour sélectionner le bon composant selon designType
+    switch (tag.designType) {
+      case 'hanging':
+        return PriceTagHanging(tag: tag);
+      case 'ribbon':
+        return PriceTagRibbon(tag: tag);
+      case 'square':
+      default:
+        return PriceTagSquare(tag: tag);
     }
-
-    final bgColor = parseColor(tag.backgroundColor, Colors.white);
-    final textColor = parseColor(tag.textColor, Colors.black);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.grey.shade400, blurRadius: 6)],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            tag.productName,
-            style: TextStyle(
-              color: textColor,
-              fontWeight: FontWeight.bold,
-              fontSize: 22,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            "${tag.oldPrice.toStringAsFixed(0)} ${tag.currency}",
-            style: TextStyle(
-              fontSize: 16,
-              decoration: TextDecoration.lineThrough,
-              color: textColor.withValues(alpha: 0.6),
-            ),
-          ),
-          Text(
-            "${tag.newPrice.toStringAsFixed(0)} ${tag.currency}",
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: Colors.redAccent,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

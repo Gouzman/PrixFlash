@@ -30,4 +30,18 @@ class PriceTagViewModel extends Notifier<PriceTag> {
   void updateTextColor(String color) {
     state = state.copyWith(textColor: color);
   }
+
+  // 🧩 nouvelle méthode pour changer le design
+  void updateDesignType(String designType) {
+    state = state.copyWith(designType: designType);
+  }
+  
+void updateFont(String font) =>
+    state = state.copyWith(fontFamily: font);
+
+void updateLogoPath(String? path) =>
+    state = state.copyWith(logoPath: path);
+
 }
+
+

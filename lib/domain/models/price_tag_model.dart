@@ -5,14 +5,20 @@ class PriceTag {
   final String currency;
   final String backgroundColor;
   final String textColor;
+  final String designType;
+  final String fontFamily;   // 🆕
+  final String? logoPath;    // 🆕
 
   const PriceTag({
     required this.productName,
     required this.oldPrice,
     required this.newPrice,
     this.currency = 'FCFA',
-    this.backgroundColor = '#FFFFFF',
-    this.textColor = '#000000',
+    this.backgroundColor = '#000000',
+    this.textColor = '#FFFFFF',
+    this.designType = 'square',
+    this.fontFamily = 'Poppins',
+    this.logoPath,
   });
 
   PriceTag copyWith({
@@ -22,6 +28,9 @@ class PriceTag {
     String? currency,
     String? backgroundColor,
     String? textColor,
+    String? designType,
+    String? fontFamily,
+    String? logoPath,
   }) {
     return PriceTag(
       productName: productName ?? this.productName,
@@ -30,15 +39,9 @@ class PriceTag {
       currency: currency ?? this.currency,
       backgroundColor: backgroundColor ?? this.backgroundColor,
       textColor: textColor ?? this.textColor,
+      designType: designType ?? this.designType,
+      fontFamily: fontFamily ?? this.fontFamily,
+      logoPath: logoPath ?? this.logoPath,
     );
   }
-
-  Map<String, dynamic> toJson() => {
-    'productName': productName,
-    'oldPrice': oldPrice,
-    'newPrice': newPrice,
-    'currency': currency,
-    'backgroundColor': backgroundColor,
-    'textColor': textColor,
-  };
 }
