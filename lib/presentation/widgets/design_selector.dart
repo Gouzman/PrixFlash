@@ -11,7 +11,6 @@ class DesignSelector extends ConsumerWidget {
     final tag = ref.watch(priceTagProvider);
     final viewModel = ref.read(priceTagProvider.notifier);
 
-    // Liste des designs à afficher
     final designs = [
       {'label': 'Carré', 'type': 'square'},
       {'label': 'Suspendu', 'type': 'hanging'},
@@ -21,7 +20,7 @@ class DesignSelector extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         Text(
           "🧩 Choisir un modèle d’étiquette",
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -29,10 +28,14 @@ class DesignSelector extends ConsumerWidget {
               ),
         ),
         const SizedBox(height: 12),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: designs.map((d) {
+        SizedBox(
+          height: 140, // Limite fixe pour le contenu
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemCount: designs.length,
+            itemBuilder: (context, index) {
+              final d = designs[index];
               final selected = tag.designType == d['type'];
               final miniTag = tag.copyWith(designType: d['type']!);
 
@@ -40,10 +43,8 @@ class DesignSelector extends ConsumerWidget {
                 onTap: () => viewModel.updateDesignType(d['type']!),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 250),
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  padding: const EdgeInsets.all(8),
                   width: 120,
-                  height: 120,
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: selected
                         ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
@@ -59,15 +60,18 @@ class DesignSelector extends ConsumerWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Transform.scale(
-                        scale: 0.6,
-                        child: PriceTagWidget(tag: miniTag),
+                      Expanded(
+                        child: FittedBox(
+                          fit: BoxFit.contain,
+                          child: PriceTagWidget(tag: miniTag),
+                        ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Text(
                         d['label']!,
                         style: TextStyle(
                           fontWeight: FontWeight.w600,
+                          fontSize: 13,
                           color: selected
                               ? Theme.of(context).colorScheme.primary
                               : Colors.black87,
@@ -77,7 +81,7 @@ class DesignSelector extends ConsumerWidget {
                   ),
                 ),
               );
-            }).toList(),
+            },
           ),
         ),
       ],
