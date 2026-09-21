@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pubprix a besoin d'accéder à vos photos pour créer votre publication.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Pubprix enregistre votre publication générée dans votre galerie.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
