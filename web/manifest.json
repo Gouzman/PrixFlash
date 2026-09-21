@@ -1,6 +1,6 @@
 {
-    "name": "prixflash",
-    "short_name": "prixflash",
+    "name": "pubprix",
+    "short_name": "pubprix",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

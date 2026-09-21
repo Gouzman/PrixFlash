@@ -1,4 +1,4 @@
-package com.example.prixflash
+package com.example.pubprix
 
 import io.flutter.embedding.android.FlutterActivity
 
