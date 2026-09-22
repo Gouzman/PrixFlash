@@ -16,6 +16,16 @@ Get-Content $envFile | ForEach-Object {
     if ($line -match '^([^=]+)=(.*)$') {
         $name = $matches[1].Trim()
         $value = $matches[2].Trim()
+        # Retire une paire de guillemets englobante (simples ou doubles),
+        # comme le font la plupart des parseurs .env — sans ça, une valeur
+        # ecrite entre guillemets se retrouve avec les guillemets litteraux
+        # inclus dans la variable d'environnement.
+        if ($value.Length -ge 2 -and (
+                ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+                ($value.StartsWith("'") -and $value.EndsWith("'"))
+            )) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
         Set-Item -Path "Env:$name" -Value $value
     }
 }
