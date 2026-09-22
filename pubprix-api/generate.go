@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -96,12 +98,14 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := json.Marshal(engineReq)
 	if err != nil {
+		log.Printf("génération (draft=%s): marshal requête moteur: %v", id, err)
 		http.Error(w, "requête invalide", http.StatusInternalServerError)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, engineBaseURL()+"/generate", bytes.NewReader(body))
 	if err != nil {
+		log.Printf("génération (draft=%s): préparation requête moteur: %v", id, err)
 		http.Error(w, "impossible de préparer l'appel au moteur", http.StatusInternalServerError)
 		return
 	}
@@ -109,28 +113,38 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := engineClient.Do(req)
 	if err != nil {
+		log.Printf("génération (draft=%s): appel moteur (%s): %v", id, engineBaseURL(), err)
 		http.Error(w, "moteur de génération indisponible", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("génération (draft=%s): moteur a répondu %d: %s", id, resp.StatusCode, string(respBody))
 		http.Error(w, "échec de la génération", http.StatusBadGateway)
 		return
 	}
 
 	var engineResp engineGenerateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&engineResp); err != nil {
+		log.Printf("génération (draft=%s): décodage réponse moteur: %v", id, err)
 		http.Error(w, "réponse du moteur invalide", http.StatusBadGateway)
 		return
 	}
 	if engineResp.Status != "ok" || engineResp.ImageBase64 == nil {
+		errMsg := ""
+		if engineResp.Error != nil {
+			errMsg = *engineResp.Error
+		}
+		log.Printf("génération (draft=%s): moteur status=%q error=%q", id, engineResp.Status, errMsg)
 		http.Error(w, "le moteur n'a pas pu générer le visuel", http.StatusBadGateway)
 		return
 	}
 
 	imageURL, err := storeGeneratedImage(r.Context(), id, *engineResp.ImageBase64, engineResp.ContentType)
 	if err != nil {
+		log.Printf("génération (draft=%s): stockage du visuel généré: %v", id, err)
 		if errors.Is(err, ErrStorageNotConfigured) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {

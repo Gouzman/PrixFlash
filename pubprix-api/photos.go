@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"path/filepath"
 
@@ -73,6 +74,7 @@ func uploadPhotosHandler(w http.ResponseWriter, r *http.Request) {
 		url, err := photoStorage.upload(r.Context(), key, contentType, file)
 		_ = file.Close()
 		if err != nil {
+			log.Printf("upload photo vers le stockage (draft=%s, key=%s): %v", id, key, err)
 			http.Error(w, "échec de l'upload vers le stockage", http.StatusBadGateway)
 			return
 		}
