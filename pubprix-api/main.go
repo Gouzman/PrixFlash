@@ -36,5 +36,5 @@ func main() {
 
 	addr := ":8080"
 	log.Printf("Pubprix API à l'écoute sur %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, withCORS(mux)))
 }
