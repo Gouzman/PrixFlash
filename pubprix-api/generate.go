@@ -161,7 +161,7 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 	imageURL, err := storeGeneratedImage(r.Context(), id, *engineResp.ImageBase64, engineResp.ContentType)
 	if err != nil {
 		log.Printf("génération (draft=%s): stockage du visuel généré: %v", id, err)
-		if errors.Is(err, ErrStorageNotConfigured) {
+		if errors.Is(err, ErrStorageNotConfigured) || errors.Is(err, ErrPostsStorageNotConfigured) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		} else {
 			http.Error(w, "échec du stockage du visuel généré", http.StatusBadGateway)
@@ -210,9 +210,10 @@ func signPhotoURLs(ctx context.Context, photoURLs []string) ([]string, error) {
 }
 
 // storeGeneratedImage décode le JPEG base64 renvoyé par le moteur et
-// l'uploade vers le même stockage R2 que les photos sources, pour obtenir
-// une URL publique exploitable par l'app (Image.network) et par les liens
-// de partage (posts.go).
+// l'uploade vers le bucket public dédié aux visuels générés
+// (S3_POSTS_BUCKET, distinct du bucket privé des photos sources), pour
+// obtenir une URL publique et durable exploitable par l'app
+// (Image.network) et par les liens de partage (posts.go).
 func storeGeneratedImage(ctx context.Context, draftID, imageBase64 string, contentType *string) (string, error) {
 	if photoStorage == nil {
 		return "", ErrStorageNotConfigured
@@ -229,7 +230,7 @@ func storeGeneratedImage(ctx context.Context, draftID, imageBase64 string, conte
 	}
 
 	key := fmt.Sprintf("posts/%s/%s.jpg", draftID, uuid.NewString())
-	return photoStorage.upload(ctx, key, ct, bytes.NewReader(decoded))
+	return photoStorage.uploadPost(ctx, key, ct, bytes.NewReader(decoded))
 }
 
 func getPost(id string) (*GeneratedPost, bool) {
