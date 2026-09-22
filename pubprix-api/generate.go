@@ -20,6 +20,11 @@ import (
 
 var engineClient = &http.Client{Timeout: 30 * time.Second}
 
+// Durée de validité des URLs signées transmises au moteur — le
+// téléchargement a lieu immédiatement après l'appel, 10 minutes suffisent
+// largement.
+const enginePhotoURLTTL = 10 * time.Minute
+
 func engineBaseURL() string {
 	if url := os.Getenv("ENGINE_BASE_URL"); url != "" {
 		return url
@@ -90,8 +95,19 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	signedPhotoURLs, err := signPhotoURLs(r.Context(), draft.Photos)
+	if err != nil {
+		log.Printf("génération (draft=%s): signature des URLs photos: %v", id, err)
+		if errors.Is(err, ErrStorageNotConfigured) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		} else {
+			http.Error(w, "impossible de préparer les photos pour la génération", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	engineReq := engineGenerateRequest{
-		PhotoURLs: draft.Photos,
+		PhotoURLs: signedPhotoURLs,
 		Price:     draft.Price,
 		Name:      draft.Name,
 		Format:    format,
@@ -166,6 +182,31 @@ func generateHandler(w http.ResponseWriter, r *http.Request) {
 	postsMu.Unlock()
 
 	writeJSON(w, http.StatusCreated, post)
+}
+
+// signPhotoURLs remplace les URLs "publiques" stockées sur le draft par
+// des URLs signées à durée de vie courte : le bucket R2 est privé, le
+// moteur de génération (service tiers, appelé en HTTP simple) ne peut pas
+// s'authentifier et a donc besoin d'un accès temporaire par URL signée
+// pour télécharger chaque photo.
+func signPhotoURLs(ctx context.Context, photoURLs []string) ([]string, error) {
+	if photoStorage == nil {
+		return nil, ErrStorageNotConfigured
+	}
+
+	signed := make([]string, 0, len(photoURLs))
+	for _, photoURL := range photoURLs {
+		key, ok := photoStorage.keyFromPublicURL(photoURL)
+		if !ok {
+			return nil, fmt.Errorf("URL de photo inattendue, clé introuvable: %s", photoURL)
+		}
+		signedURL, err := photoStorage.presignedGetURL(ctx, key, enginePhotoURLTTL)
+		if err != nil {
+			return nil, fmt.Errorf("signature de %q: %w", key, err)
+		}
+		signed = append(signed, signedURL)
+	}
+	return signed, nil
 }
 
 // storeGeneratedImage décode le JPEG base64 renvoyé par le moteur et

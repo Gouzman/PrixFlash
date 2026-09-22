@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -25,9 +26,10 @@ var ErrStorageNotConfigured = errors.New("stockage S3 non configuré : S3_ENDPOI
 // PhotoStorage encapsule l'accès au bucket S3-compatible utilisé pour les
 // photos des brouillons.
 type PhotoStorage struct {
-	client     *s3.Client
-	bucket     string
-	publicBase string
+	client        *s3.Client
+	presignClient *s3.PresignClient
+	bucket        string
+	publicBase    string
 }
 
 func newPhotoStorageFromEnv(ctx context.Context) (*PhotoStorage, error) {
@@ -63,12 +65,14 @@ func newPhotoStorageFromEnv(ctx context.Context) (*PhotoStorage, error) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true // requis par R2 et la plupart des S3-compatibles
 	})
+	presignClient := s3.NewPresignClient(client)
 
-	return &PhotoStorage{client: client, bucket: bucket, publicBase: publicBase}, nil
+	return &PhotoStorage{client: client, presignClient: presignClient, bucket: bucket, publicBase: publicBase}, nil
 }
 
 // upload envoie le contenu vers le bucket et renvoie l'URL publique de
-// l'objet stocké.
+// l'objet stocké. Cette URL n'est pas forcément accessible telle quelle si
+// le bucket est privé — voir presignedGetURL.
 func (s *PhotoStorage) upload(ctx context.Context, key, contentType string, body io.Reader) (string, error) {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
@@ -80,4 +84,32 @@ func (s *PhotoStorage) upload(ctx context.Context, key, contentType string, body
 		return "", err
 	}
 	return s.publicBase + "/" + key, nil
+}
+
+// keyFromPublicURL retrouve la clé objet à partir d'une URL renvoyée par
+// upload (publicBase + "/" + key), pour pouvoir la re-signer plus tard.
+// Renvoie false si l'URL ne vient pas de ce stockage (bucket/base changés
+// entre l'upload et l'appel, par ex.).
+func (s *PhotoStorage) keyFromPublicURL(url string) (string, bool) {
+	prefix := s.publicBase + "/"
+	if !strings.HasPrefix(url, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(url, prefix), true
+}
+
+// presignedGetURL renvoie une URL de téléchargement signée et à durée de
+// vie limitée pour l'objet à la clé donnée. Le bucket R2 n'étant pas
+// public, c'est cette URL (et non l'URL "publique" brute) qu'il faut
+// transmettre à un tiers, comme le moteur de génération, pour qu'il
+// puisse télécharger la photo.
+func (s *PhotoStorage) presignedGetURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	req, err := s.presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
 }
