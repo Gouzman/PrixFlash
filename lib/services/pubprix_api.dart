@@ -33,14 +33,18 @@ class PubprixApiService {
   /// POST /drafts/{id}/photos — API-03.
   ///
   /// Upload multipart des photos sélectionnées ; l'API les stocke sur R2 et
-  /// renvoie leurs URLs.
+  /// renvoie leurs URLs. Envoyé à partir des bytes (via [XFile.readAsBytes])
+  /// plutôt que du chemin disque : `fromPath` échoue sur Flutter Web, où un
+  /// [XFile] n'a pas de vrai chemin de fichier accessible.
   Future<List<String>> uploadPhotos(String draftId, {required List<XFile> photos}) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('$_baseUrl/drafts/$draftId/photos'),
     );
     for (final photo in photos) {
-      request.files.add(await http.MultipartFile.fromPath('photos', photo.path));
+      request.files.add(
+        http.MultipartFile.fromBytes('photos', await photo.readAsBytes(), filename: photo.name),
+      );
     }
 
     final streamedResponse = await _client.send(request);

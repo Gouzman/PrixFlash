@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -22,16 +22,24 @@ class PhotoPickerScreen extends StatefulWidget {
 class _PhotoPickerScreenState extends State<PhotoPickerScreen> {
   final ImagePicker _picker = ImagePicker();
   final List<XFile> _photos = [];
+  // Bytes lus une seule fois au moment de la sélection (même index que
+  // _photos) : Image.memory fonctionne sur toutes les plateformes, y
+  // compris Flutter Web où un XFile n'a pas de chemin disque utilisable.
+  final List<Uint8List> _photoBytes = [];
 
   Future<void> _pickPhotos() async {
     final picked = await _picker.pickMultiImage(limit: _maxPhotos);
     if (picked.isEmpty) return;
 
     final remainingSlots = _maxPhotos - _photos.length;
+    final toAdd = picked.take(remainingSlots).toList();
     final overflow = picked.length > remainingSlots;
 
+    final bytesToAdd = await Future.wait(toAdd.map((photo) => photo.readAsBytes()));
+
     setState(() {
-      _photos.addAll(picked.take(remainingSlots));
+      _photos.addAll(toAdd);
+      _photoBytes.addAll(bytesToAdd);
     });
 
     if (overflow) _showMaxPhotosNotice();
@@ -44,7 +52,10 @@ class _PhotoPickerScreenState extends State<PhotoPickerScreen> {
   }
 
   void _removePhoto(int index) {
-    setState(() => _photos.removeAt(index));
+    setState(() {
+      _photos.removeAt(index);
+      _photoBytes.removeAt(index);
+    });
   }
 
   void _continue() {
@@ -80,7 +91,7 @@ class _PhotoPickerScreenState extends State<PhotoPickerScreen> {
                       ),
                       itemCount: _photos.length,
                       itemBuilder: (context, index) => _PhotoTile(
-                        photo: _photos[index],
+                        bytes: _photoBytes[index],
                         onRemove: () => _removePhoto(index),
                       ),
                     ),
@@ -129,9 +140,9 @@ class _EmptyPhotosPlaceholder extends StatelessWidget {
 }
 
 class _PhotoTile extends StatelessWidget {
-  const _PhotoTile({required this.photo, required this.onRemove});
+  const _PhotoTile({required this.bytes, required this.onRemove});
 
-  final XFile photo;
+  final Uint8List bytes;
   final VoidCallback onRemove;
 
   @override
@@ -141,7 +152,7 @@ class _PhotoTile extends StatelessWidget {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Image.file(File(photo.path), fit: BoxFit.cover),
+          child: Image.memory(bytes, fit: BoxFit.cover),
         ),
         Positioned(
           top: 4,
