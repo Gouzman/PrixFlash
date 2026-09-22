@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../config/app_config.dart';
@@ -36,6 +37,10 @@ class PubprixApiService {
   /// renvoie leurs URLs. Envoyé à partir des bytes (via [XFile.readAsBytes])
   /// plutôt que du chemin disque : `fromPath` échoue sur Flutter Web, où un
   /// [XFile] n'a pas de vrai chemin de fichier accessible.
+  ///
+  /// `contentType` est fourni explicitement : [http.MultipartFile.fromBytes]
+  /// ne l'infère jamais du nom de fichier et retombe sinon sur
+  /// `application/octet-stream`, que l'API rejette en 400.
   Future<List<String>> uploadPhotos(String draftId, {required List<XFile> photos}) async {
     final request = http.MultipartRequest(
       'POST',
@@ -43,7 +48,12 @@ class PubprixApiService {
     );
     for (final photo in photos) {
       request.files.add(
-        http.MultipartFile.fromBytes('photos', await photo.readAsBytes(), filename: photo.name),
+        http.MultipartFile.fromBytes(
+          'photos',
+          await photo.readAsBytes(),
+          filename: photo.name,
+          contentType: MediaType.parse(photo.mimeType ?? 'image/jpeg'),
+        ),
       );
     }
 
