@@ -26,6 +26,16 @@ func main() {
 	}
 	photoStorage = storage
 
+	twilio, err := newTwilioClientFromEnv()
+	if err != nil {
+		if errors.Is(err, ErrTwilioNotConfigured) {
+			log.Printf("attention: %v — le webhook WhatsApp ne pourra pas répondre", err)
+		} else {
+			log.Fatalf("initialisation du client Twilio: %v", err)
+		}
+	}
+	twilioClient = twilio
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("POST /drafts", createDraftHandler)
@@ -33,6 +43,7 @@ func main() {
 	mux.HandleFunc("POST /drafts/{id}/photos", uploadPhotosHandler)
 	mux.HandleFunc("POST /drafts/{id}/generate", generateHandler)
 	mux.HandleFunc("GET /posts/{id}/share-links", shareLinksHandler)
+	mux.HandleFunc("POST /webhooks/twilio/whatsapp", twilioWebhookHandler)
 
 	addr := ":8080"
 	log.Printf("Pubprix API à l'écoute sur %s", addr)
