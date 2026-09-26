@@ -7,9 +7,11 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 type SellerState string
@@ -19,6 +21,8 @@ const (
 	StateAttenteLogo        SellerState = "ATTENTE_LOGO"
 	StatePret               SellerState = "PRET"
 	StateReceptionPhotos    SellerState = "RECEPTION_PHOTOS"
+	StateAttenteStyle       SellerState = "ATTENTE_STYLE"
+	StateGeneration         SellerState = "GENERATION"
 )
 
 // maxDraftPhotos borne le nombre de photos par publication WhatsApp (1 à
@@ -28,13 +32,35 @@ const maxDraftPhotos = 6
 
 const readyMessage = "Envoie-moi 1 à 6 photos de ton produit, avec le prix si tu veux."
 
+// styleOptions liste les styles de fond proposés à la fin de la
+// réception des photos. Pas de vrais boutons interactifs WhatsApp pour
+// l'instant (support incertain sur le bac à sable Twilio) : liste
+// numérotée en texte, réponse par "1", "2" ou "3", ou par le nom de
+// l'option — ticket séparé pour les reply buttons si besoin.
+var styleOptions = []string{"Fond blanc", "Fond couleur", "Mise en scène"}
+
+var styleChoicePrompt = buildStyleChoicePrompt()
+
+func buildStyleChoicePrompt() string {
+	var b strings.Builder
+	b.WriteString("Quel style de fond pour ta publication ?\n")
+	for i, opt := range styleOptions {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, opt)
+	}
+	b.WriteString("Réponds avec le numéro de ton choix.")
+	return b.String()
+}
+
+const generationStubMessage = "Photos reçues, traitement en cours de développement, merci de ta patience"
+
 // SellerDraft est la publication en préparation pour un vendeur : juste
-// les références des photos reçues et les notes texte qui les
-// accompagnent (prix, détails...) — pas de traitement d'image à ce stade
-// (RS/API à venir).
+// les références des photos reçues, les notes texte qui les accompagnent
+// (prix, détails...) et le style choisi — pas de traitement d'image à ce
+// stade (tickets IMG à venir).
 type SellerDraft struct {
 	Photos []string
 	Notes  []string
+	Style  string
 }
 
 // Seller représente un vendeur WhatsApp et son avancement dans la
@@ -99,6 +125,14 @@ func HandleIncomingMessage(msg IncomingMessage) string {
 		return handlePret(seller, body, hasMedia, msg.MediaRefs)
 	case StateReceptionPhotos:
 		return handleReceptionPhotos(seller, body, hasMedia, msg.MediaRefs)
+	case StateAttenteStyle:
+		return handleAttenteStyle(seller, body)
+	case StateGeneration:
+		// Ne devrait pas être observé en pratique : la transition vers
+		// GENERATION se résout de façon synchrone dans le même appel (voir
+		// handleGeneration). Filet de sécurité si un message arrive quand
+		// même pendant ce court état.
+		return "Ta publication est en cours de traitement, merci de patienter."
 	default:
 		// Ne devrait pas arriver ; on ne perd pas le vendeur pour autant.
 		seller.State = StateAttenteNomBoutique
@@ -147,10 +181,48 @@ func handleReceptionPhotos(seller *Seller, body string, hasMedia bool, mediaRefs
 	if seller.Draft == nil {
 		seller.Draft = &SellerDraft{}
 	}
+
+	if !hasMedia && isFinishKeyword(body) {
+		if len(seller.Draft.Photos) == 0 {
+			return "Il me faut au moins une photo avant de continuer. Envoie une photo de ton produit."
+		}
+		seller.State = StateAttenteStyle
+		return styleChoicePrompt
+	}
+
 	if !hasMedia && body == "" {
 		return "Envoie une photo ou un prix pour continuer ta publication."
 	}
 	return addToDraft(seller.Draft, body, mediaRefs)
+}
+
+// handleAttenteStyle traite la réponse au choix de style (numéro 1/2/3 ou
+// nom de l'option). Une réponse valide enregistre le style sur le
+// brouillon et fait passer le vendeur en GENERATION — état qui se résout
+// immédiatement pour l'instant (voir handleGeneration).
+func handleAttenteStyle(seller *Seller, body string) string {
+	choice, ok := matchStyleChoice(body)
+	if !ok {
+		return "Je n'ai pas compris ton choix.\n\n" + styleChoicePrompt
+	}
+	if seller.Draft == nil {
+		// Filet de sécurité : ne devrait pas arriver, on vient forcément
+		// de RECEPTION_PHOTOS avec un brouillon non vide.
+		seller.Draft = &SellerDraft{}
+	}
+	seller.Draft.Style = choice
+	seller.State = StateGeneration
+	return handleGeneration(seller)
+}
+
+// handleGeneration représente le comportement de l'état GENERATION.
+// Stub pour l'instant : le traitement d'image n'est pas encore branché
+// (tickets IMG à venir) — on répond immédiatement et on remet le vendeur
+// en PRET pour qu'il puisse démarrer un nouveau produit.
+func handleGeneration(seller *Seller) string {
+	seller.State = StatePret
+	seller.Draft = nil
+	return generationStubMessage
 }
 
 // addToDraft ajoute les photos (jusqu'à maxDraftPhotos) et la note texte
@@ -192,4 +264,64 @@ func isSkip(body string) bool {
 	default:
 		return false
 	}
+}
+
+// finishKeywords, une fois chaque entrée passée par normalizeText.
+// L'apostrophe de "c'est fini" devient un espace lors de la
+// normalisation, d'où "c est fini" plutôt que "cest fini".
+var finishKeywords = map[string]bool{
+	"c est fini": true,
+	"fini":       true,
+	"termine":    true,
+	"go":         true,
+}
+
+// isFinishKeyword détecte un signal de fin d'envoi de photos, insensible
+// à la casse, aux accents et à la ponctuation environnante (guillemets
+// exacts non requis).
+func isFinishKeyword(body string) bool {
+	return finishKeywords[normalizeText(body)]
+}
+
+// matchStyleChoice reconnaît une réponse au choix de style : un chiffre
+// (1/2/3) ou le nom de l'option (insensible à la casse/accents).
+func matchStyleChoice(body string) (string, bool) {
+	trimmed := strings.TrimSpace(body)
+	if idx, err := strconv.Atoi(trimmed); err == nil && idx >= 1 && idx <= len(styleOptions) {
+		return styleOptions[idx-1], true
+	}
+
+	normalized := normalizeText(body)
+	for _, opt := range styleOptions {
+		if normalizeText(opt) == normalized {
+			return opt, true
+		}
+	}
+	return "", false
+}
+
+var accentReplacer = strings.NewReplacer(
+	"é", "e", "è", "e", "ê", "e", "ë", "e",
+	"à", "a", "â", "a", "ä", "a",
+	"î", "i", "ï", "i",
+	"ô", "o", "ö", "o",
+	"ù", "u", "û", "u", "ü", "u",
+	"ç", "c",
+)
+
+// normalizeText met en minuscules, retire les accents et remplace toute
+// ponctuation par des espaces (compressés), pour comparer du texte libre
+// aux mots-clés attendus sans exiger une saisie exacte.
+func normalizeText(s string) string {
+	s = accentReplacer.Replace(strings.ToLower(strings.TrimSpace(s)))
+
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }

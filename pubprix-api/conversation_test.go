@@ -239,3 +239,161 @@ func TestTwoSellersDoNotInterfere(t *testing.T) {
 		t.Errorf("vendeur B: nom attendu %q, obtenu %q", "Boutique B", sellerB.ShopName)
 	}
 }
+
+// onboardToReceptionPhotos amène un vendeur jusqu'en RECEPTION_PHOTOS
+// avec nPhotos déjà envoyées, pour les tests portant sur la suite du
+// flux (signal de fin, choix de style).
+func onboardToReceptionPhotos(t *testing.T, phone string, nPhotos int) {
+	t.Helper()
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "salut"})
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "Ma Boutique"})
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "non"})
+	for i := 0; i < nPhotos; i++ {
+		HandleIncomingMessage(IncomingMessage{From: phone, MediaRefs: []string{fmt.Sprintf("photo%d", i)}})
+	}
+}
+
+func TestFinishKeywordWithoutPhotosStaysInReceptionPhotos(t *testing.T) {
+	phone := uniquePhone(t)
+	// Arriver en RECEPTION_PHOTOS ajoute toujours au moins une photo (voir
+	// handlePret), donc "brouillon vide en RECEPTION_PHOTOS" n'est pas
+	// atteignable via le flux normal. On force l'état directement pour
+	// vérifier que le garde-fou du ticket reste correct si jamais ça
+	// arrive (ex: évolution future du flux).
+	sellersMu.Lock()
+	sellers[phone] = &Seller{
+		PhoneNumber: phone,
+		State:       StateReceptionPhotos,
+		ShopName:    "Ma Boutique",
+		Draft:       &SellerDraft{},
+	}
+	sellersMu.Unlock()
+
+	reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: "c'est fini"})
+
+	if !strings.Contains(reply, "au moins une photo") {
+		t.Errorf("réponse attendue demandant au moins une photo, reçu: %q", reply)
+	}
+	seller := getSeller(t, phone)
+	if seller.State != StateReceptionPhotos {
+		t.Errorf("état attendu %s (inchangé), obtenu %s", StateReceptionPhotos, seller.State)
+	}
+}
+
+func TestFinishKeywordVariantsMoveToAttenteStyle(t *testing.T) {
+	variants := []string{"c'est fini", "C'EST FINI", "fini", "Fini.", "terminé", "TERMINÉ", "go", "Go !"}
+
+	for _, kw := range variants {
+		phone := uniquePhone(t)
+		onboardToReceptionPhotos(t, phone, 2)
+
+		reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: kw})
+
+		if !strings.Contains(reply, "1.") || !strings.Contains(reply, "Fond blanc") {
+			t.Errorf("mot-clé %q: réponse attendue listant les styles, reçu: %q", kw, reply)
+		}
+		seller := getSeller(t, phone)
+		if seller.State != StateAttenteStyle {
+			t.Errorf("mot-clé %q: état attendu %s, obtenu %s", kw, StateAttenteStyle, seller.State)
+		}
+		if len(seller.Draft.Photos) != 2 {
+			t.Errorf("mot-clé %q: les photos du brouillon ne devraient pas être perdues, obtenu %d", kw, len(seller.Draft.Photos))
+		}
+	}
+}
+
+func TestNonFinishTextStaysInReceptionPhotos(t *testing.T) {
+	phone := uniquePhone(t)
+	onboardToReceptionPhotos(t, phone, 1)
+
+	// "fini" est un mot-clé, mais une phrase qui le contient sans être
+	// exactement ce mot-clé (normalisé) ne doit pas déclencher la fin.
+	reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: "je n'ai pas fini de choisir le prix"})
+
+	if strings.Contains(reply, "Fond blanc") {
+		t.Errorf("ne devrait pas déclencher le choix de style, reçu: %q", reply)
+	}
+	seller := getSeller(t, phone)
+	if seller.State != StateReceptionPhotos {
+		t.Errorf("état attendu %s (inchangé), obtenu %s", StateReceptionPhotos, seller.State)
+	}
+	if len(seller.Draft.Notes) != 1 {
+		t.Errorf("le texte devrait être enregistré comme note, obtenu %v", seller.Draft.Notes)
+	}
+}
+
+func TestStyleChoiceByNumberCompletesGenerationStubAndResetsToPret(t *testing.T) {
+	for i := range styleOptions {
+		phone := uniquePhone(t)
+		onboardToReceptionPhotos(t, phone, 2)
+		HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
+
+		reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: fmt.Sprintf("%d", i+1)})
+
+		if reply != generationStubMessage {
+			t.Errorf("option %d: réponse attendue le message stub de génération, reçu: %q", i+1, reply)
+		}
+		seller := getSeller(t, phone)
+		if seller.State != StatePret {
+			t.Errorf("option %d: état attendu %s après le stub, obtenu %s", i+1, StatePret, seller.State)
+		}
+		if seller.Draft != nil {
+			t.Errorf("option %d: le brouillon devrait être remis à zéro, obtenu %+v", i+1, seller.Draft)
+		}
+	}
+}
+
+func TestStyleChoiceIsActuallyWrittenOntoDraftBeforeStubClearsIt(t *testing.T) {
+	phone := uniquePhone(t)
+	onboardToReceptionPhotos(t, phone, 2)
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
+
+	// Capture le pointeur vers le brouillon avant le choix de style : le
+	// stub de GENERATION remet seller.Draft à nil, mais l'objet pointé
+	// par draftBefore reste inspectable.
+	draftBefore := getSeller(t, phone).Draft
+	if draftBefore == nil {
+		t.Fatal("le brouillon devrait exister avant le choix de style")
+	}
+
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "2"}) // "Fond couleur"
+
+	if draftBefore.Style != "Fond couleur" {
+		t.Errorf("le style choisi devrait avoir été écrit sur le brouillon, obtenu %q", draftBefore.Style)
+	}
+}
+
+func TestStyleChoiceByNameIsAccepted(t *testing.T) {
+	phone := uniquePhone(t)
+	onboardToReceptionPhotos(t, phone, 1)
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
+
+	reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: "fond couleur"})
+
+	if reply != generationStubMessage {
+		t.Errorf("réponse attendue le message stub de génération, reçu: %q", reply)
+	}
+	seller := getSeller(t, phone)
+	if seller.State != StatePret {
+		t.Errorf("état attendu %s, obtenu %s", StatePret, seller.State)
+	}
+}
+
+func TestStyleChoiceInvalidRepromptsWithoutLosingDraft(t *testing.T) {
+	phone := uniquePhone(t)
+	onboardToReceptionPhotos(t, phone, 2)
+	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
+
+	reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: "je sais pas"})
+
+	if !strings.Contains(reply, "Fond blanc") {
+		t.Errorf("réponse attendue relistant les options, reçu: %q", reply)
+	}
+	seller := getSeller(t, phone)
+	if seller.State != StateAttenteStyle {
+		t.Errorf("état attendu %s (inchangé), obtenu %s", StateAttenteStyle, seller.State)
+	}
+	if seller.Draft == nil || len(seller.Draft.Photos) != 2 {
+		t.Errorf("le brouillon ne devrait pas être perdu sur un choix invalide")
+	}
+}
