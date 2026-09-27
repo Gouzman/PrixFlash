@@ -55,6 +55,11 @@ type engineGenerateRequest struct {
 	Price     float64  `json:"price"`
 	Name      string   `json:"name,omitempty"`
 	Format    string   `json:"format"`
+	// Style : "white" | "color" | "scene" — fond à poser derrière chaque
+	// photo avant la composition (voir pubprix-engine/src/background.rs).
+	// Absent pour l'ancien flux Flutter, dont les photos ne sont pas
+	// détourées.
+	Style string `json:"style,omitempty"`
 }
 
 // engineGenerateResponse reflète la réponse de pubprix-engine : le moteur

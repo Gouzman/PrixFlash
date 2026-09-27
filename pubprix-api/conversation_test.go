@@ -26,6 +26,27 @@ func getSeller(t *testing.T, phone string) *Seller {
 	return s
 }
 
+type generationPipelineCall struct {
+	phone  string
+	photos []string
+	style  string
+}
+
+// withMockedGenerationPipeline remplace generationPipelineRunner par un
+// double qui enregistre ses appels au lieu de faire de vrais appels
+// réseau (detourage/moteur/Twilio/R2, indisponibles en test unitaire).
+// Le pipeline réel est validé par test d'intégration bout en bout.
+func withMockedGenerationPipeline(t *testing.T) *[]generationPipelineCall {
+	t.Helper()
+	var calls []generationPipelineCall
+	original := generationPipelineRunner
+	generationPipelineRunner = func(seller *Seller, photos []string, style string) {
+		calls = append(calls, generationPipelineCall{phone: seller.PhoneNumber, photos: photos, style: style})
+	}
+	t.Cleanup(func() { generationPipelineRunner = original })
+	return &calls
+}
+
 func TestUnknownNumberStartsOnboarding(t *testing.T) {
 	phone := uniquePhone(t)
 
@@ -322,7 +343,9 @@ func TestNonFinishTextStaysInReceptionPhotos(t *testing.T) {
 	}
 }
 
-func TestStyleChoiceByNumberCompletesGenerationStubAndResetsToPret(t *testing.T) {
+func TestStyleChoiceByNumberTriggersGenerationPipeline(t *testing.T) {
+	calls := withMockedGenerationPipeline(t)
+
 	for i := range styleOptions {
 		phone := uniquePhone(t)
 		onboardToReceptionPhotos(t, phone, 2)
@@ -330,56 +353,65 @@ func TestStyleChoiceByNumberCompletesGenerationStubAndResetsToPret(t *testing.T)
 
 		reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: fmt.Sprintf("%d", i+1)})
 
-		if reply != generationStubMessage {
-			t.Errorf("option %d: réponse attendue le message stub de génération, reçu: %q", i+1, reply)
+		if reply != generationStartedMessage {
+			t.Errorf("option %d: réponse attendue l'accusé de réception, reçu: %q", i+1, reply)
 		}
 		seller := getSeller(t, phone)
-		if seller.State != StatePret {
-			t.Errorf("option %d: état attendu %s après le stub, obtenu %s", i+1, StatePret, seller.State)
+		if seller.State != StateGeneration {
+			t.Errorf("option %d: état attendu %s, obtenu %s", i+1, StateGeneration, seller.State)
 		}
-		if seller.Draft != nil {
-			t.Errorf("option %d: le brouillon devrait être remis à zéro, obtenu %+v", i+1, seller.Draft)
+		if seller.Draft == nil || seller.Draft.Style != styleOptions[i] {
+			t.Errorf("option %d: style attendu %q sur le brouillon, obtenu %+v", i+1, styleOptions[i], seller.Draft)
 		}
+	}
+
+	if len(*calls) != len(styleOptions) {
+		t.Errorf("pipeline attendu déclenché %d fois, obtenu %d", len(styleOptions), len(*calls))
 	}
 }
 
-func TestStyleChoiceIsActuallyWrittenOntoDraftBeforeStubClearsIt(t *testing.T) {
+func TestStyleChoicePassesDraftPhotosAndStyleToPipeline(t *testing.T) {
+	calls := withMockedGenerationPipeline(t)
 	phone := uniquePhone(t)
-	onboardToReceptionPhotos(t, phone, 2)
+	onboardToReceptionPhotos(t, phone, 3)
 	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
-
-	// Capture le pointeur vers le brouillon avant le choix de style : le
-	// stub de GENERATION remet seller.Draft à nil, mais l'objet pointé
-	// par draftBefore reste inspectable.
-	draftBefore := getSeller(t, phone).Draft
-	if draftBefore == nil {
-		t.Fatal("le brouillon devrait exister avant le choix de style")
-	}
 
 	HandleIncomingMessage(IncomingMessage{From: phone, Body: "2"}) // "Fond couleur"
 
-	if draftBefore.Style != "Fond couleur" {
-		t.Errorf("le style choisi devrait avoir été écrit sur le brouillon, obtenu %q", draftBefore.Style)
+	if len(*calls) != 1 {
+		t.Fatalf("pipeline attendu déclenché une fois, obtenu %d", len(*calls))
+	}
+	call := (*calls)[0]
+	if call.style != "Fond couleur" {
+		t.Errorf("style attendu %q, obtenu %q", "Fond couleur", call.style)
+	}
+	if len(call.photos) != 3 {
+		t.Errorf("3 photos attendues transmises au pipeline, obtenu %d", len(call.photos))
 	}
 }
 
-func TestStyleChoiceByNameIsAccepted(t *testing.T) {
+func TestStyleChoiceByNameTriggersGenerationPipeline(t *testing.T) {
+	calls := withMockedGenerationPipeline(t)
 	phone := uniquePhone(t)
 	onboardToReceptionPhotos(t, phone, 1)
 	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
 
 	reply := HandleIncomingMessage(IncomingMessage{From: phone, Body: "fond couleur"})
 
-	if reply != generationStubMessage {
-		t.Errorf("réponse attendue le message stub de génération, reçu: %q", reply)
+	if reply != generationStartedMessage {
+		t.Errorf("réponse attendue l'accusé de réception, reçu: %q", reply)
 	}
 	seller := getSeller(t, phone)
-	if seller.State != StatePret {
-		t.Errorf("état attendu %s, obtenu %s", StatePret, seller.State)
+	if seller.State != StateGeneration {
+		t.Errorf("état attendu %s, obtenu %s", StateGeneration, seller.State)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("pipeline attendu déclenché une fois, obtenu %d", len(*calls))
 	}
 }
 
-func TestStyleChoiceInvalidRepromptsWithoutLosingDraft(t *testing.T) {
+func TestStyleChoiceInvalidRepromptsWithoutLosingDraftOrTriggeringPipeline(t *testing.T) {
+	calls := withMockedGenerationPipeline(t)
 	phone := uniquePhone(t)
 	onboardToReceptionPhotos(t, phone, 2)
 	HandleIncomingMessage(IncomingMessage{From: phone, Body: "fini"})
@@ -395,5 +427,8 @@ func TestStyleChoiceInvalidRepromptsWithoutLosingDraft(t *testing.T) {
 	}
 	if seller.Draft == nil || len(seller.Draft.Photos) != 2 {
 		t.Errorf("le brouillon ne devrait pas être perdu sur un choix invalide")
+	}
+	if len(*calls) != 0 {
+		t.Errorf("le pipeline ne devrait pas être déclenché sur un choix invalide, obtenu %d appel(s)", len(*calls))
 	}
 }

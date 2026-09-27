@@ -2,6 +2,7 @@
 // Microservice interne, appelé uniquement par l'API Go. Voir le cahier
 // des charges technique, section "Moteur de génération d'image (Rust)".
 
+mod background;
 mod compose;
 mod download;
 mod error;

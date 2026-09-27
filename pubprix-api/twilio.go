@@ -1,5 +1,5 @@
-// Client Twilio — envoi de messages WhatsApp sortants (bac à sable en
-// dev, numéro WhatsApp Business vérifié en prod) — WA-02.
+// Client Twilio — envoi/réception de médias WhatsApp (bac à sable en
+// dev, numéro WhatsApp Business vérifié en prod) — WA-02, IMG-03.
 package main
 
 import (
@@ -22,11 +22,11 @@ var ErrTwilioNotConfigured = errors.New("Twilio non configuré : TWILIO_ACCOUNT_
 // identique pour tous les comptes en mode sandbox.
 const defaultSandboxFromNumber = "whatsapp:+14155238886"
 
-// TwilioClient encapsule l'appel à l'API REST Twilio (ressource Messages)
-// pour l'envoi de messages WhatsApp. Authentification par Account SID +
-// Auth Token classique (Basic Auth) — c'est la seule paire qui a
-// effectivement fonctionné en test ; l'API Key associée au compte n'avait
-// pas son secret correctement renseigné.
+// TwilioClient encapsule l'accès à l'API REST Twilio : envoi de messages
+// WhatsApp (texte ou image) et téléchargement des pièces jointes reçues.
+// Authentification par Account SID + Auth Token classique (Basic Auth) —
+// c'est la seule paire qui a effectivement fonctionné en test ; l'API Key
+// associée au compte n'avait pas son secret correctement renseigné.
 type TwilioClient struct {
 	accountSID string
 	authToken  string
@@ -52,20 +52,38 @@ func newTwilioClientFromEnv() (*TwilioClient, error) {
 		accountSID: accountSID,
 		authToken:  authToken,
 		fromNumber: fromNumber,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
-// SendWhatsAppMessage envoie un message WhatsApp sortant via l'API REST
-// Twilio. `to` est déjà au format "whatsapp:+225XXXXXXXXX" (tel que reçu
-// dans le champ From du webhook entrant).
+// SendWhatsAppMessage envoie un message WhatsApp texte. `to` est déjà au
+// format "whatsapp:+225XXXXXXXXX" (tel que reçu dans le champ From du
+// webhook entrant).
 func (t *TwilioClient) SendWhatsAppMessage(ctx context.Context, to, body string) error {
+	form := url.Values{}
+	form.Set("Body", body)
+	return t.sendMessage(ctx, to, form)
+}
+
+// SendWhatsAppImage envoie un message WhatsApp avec une image en pièce
+// jointe (+ légende optionnelle). `mediaURL` doit être une URL
+// publiquement accessible : Twilio la télécharge lui-même côté serveur
+// pour la transmettre via WhatsApp (paramètre `MediaUrl` de l'API
+// Messages, documenté pour l'envoi de media WhatsApp sortant).
+func (t *TwilioClient) SendWhatsAppImage(ctx context.Context, to, mediaURL, caption string) error {
+	form := url.Values{}
+	if caption != "" {
+		form.Set("Body", caption)
+	}
+	form.Set("MediaUrl", mediaURL)
+	return t.sendMessage(ctx, to, form)
+}
+
+func (t *TwilioClient) sendMessage(ctx context.Context, to string, form url.Values) error {
 	endpoint := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", t.accountSID)
 
-	form := url.Values{}
 	form.Set("From", t.fromNumber)
 	form.Set("To", to)
-	form.Set("Body", body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -85,4 +103,34 @@ func (t *TwilioClient) SendWhatsAppMessage(ctx context.Context, to, body string)
 		return fmt.Errorf("Twilio a répondu %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
+}
+
+// DownloadMedia télécharge une pièce jointe reçue (ex. MediaUrl0 d'un
+// webhook entrant). Ces URLs sont protégées : Twilio exige la même
+// authentification Basic Auth (Account SID + Auth Token) que pour l'API
+// REST elle-même. Renvoie les octets et le Content-Type annoncé par
+// Twilio.
+func (t *TwilioClient) DownloadMedia(ctx context.Context, mediaURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.SetBasicAuth(t.accountSID, t.authToken)
+	req.Header.Set("User-Agent", "pubprix-api/1.0 (+https://github.com/pubprix)")
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("téléchargement média Twilio: %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, resp.Header.Get("Content-Type"), nil
 }

@@ -13,6 +13,13 @@ const BAR_COLOR: (u8, u8, u8, u8) = (10, 10, 10, 170);
 const TEXT_COLOR: Color = Color::WHITE;
 
 pub fn draw_price_and_name(canvas: &RgbaImage, price_label: &str, name: Option<&str>) -> RgbaImage {
+    let has_name = name.map(|n| !n.trim().is_empty()).unwrap_or(false);
+    if price_label.trim().is_empty() && !has_name {
+        // Rien à afficher : pas de bandeau du tout plutôt qu'un bandeau
+        // vide (flux WhatsApp actuel, avant le ticket de texte de vente).
+        return canvas.clone();
+    }
+
     let (w, h) = canvas.dimensions();
     let Some(mut pixmap) = Pixmap::new(w, h) else {
         return canvas.clone();
@@ -133,6 +140,16 @@ mod tests {
         let canvas = RgbaImage::from_pixel(200, 200, Rgba([255, 255, 255, 255]));
         let result = draw_price_and_name(&canvas, "1 000 FCFA", None);
         assert_eq!(*result.get_pixel(5, 0), Rgba([255, 255, 255, 255]));
+    }
+
+    #[test]
+    fn overlay_is_a_no_op_when_nothing_to_show() {
+        let canvas = RgbaImage::from_pixel(100, 100, Rgba([255, 255, 255, 255]));
+        let result = draw_price_and_name(&canvas, "", None);
+        assert_eq!(result, canvas, "aucun bandeau ne doit etre dessine sans prix ni nom");
+
+        let result_blank_name = draw_price_and_name(&canvas, "  ", Some("   "));
+        assert_eq!(result_blank_name, canvas, "chaines uniquement composees d'espaces = rien a afficher");
     }
 
     #[test]

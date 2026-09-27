@@ -51,7 +51,7 @@ func buildStyleChoicePrompt() string {
 	return b.String()
 }
 
-const generationStubMessage = "Photos reçues, traitement en cours de développement, merci de ta patience"
+const generationStartedMessage = "Un instant, je prépare ta publication…"
 
 // SellerDraft est la publication en préparation pour un vendeur : juste
 // les références des photos reçues, les notes texte qui les accompagnent
@@ -128,10 +128,10 @@ func HandleIncomingMessage(msg IncomingMessage) string {
 	case StateAttenteStyle:
 		return handleAttenteStyle(seller, body)
 	case StateGeneration:
-		// Ne devrait pas être observé en pratique : la transition vers
-		// GENERATION se résout de façon synchrone dans le même appel (voir
-		// handleGeneration). Filet de sécurité si un message arrive quand
-		// même pendant ce court état.
+		// Le pipeline de génération tourne en arrière-plan (quelques
+		// secondes, plusieurs appels réseau) : un message reçu pendant ce
+		// délai atterrit ici plutôt que d'interrompre ou de redémarrer le
+		// pipeline en cours.
 		return "Ta publication est en cours de traitement, merci de patienter."
 	default:
 		// Ne devrait pas arriver ; on ne perd pas le vendeur pour autant.
@@ -198,8 +198,12 @@ func handleReceptionPhotos(seller *Seller, body string, hasMedia bool, mediaRefs
 
 // handleAttenteStyle traite la réponse au choix de style (numéro 1/2/3 ou
 // nom de l'option). Une réponse valide enregistre le style sur le
-// brouillon et fait passer le vendeur en GENERATION — état qui se résout
-// immédiatement pour l'instant (voir handleGeneration).
+// brouillon, fait passer le vendeur en GENERATION, et lance le pipeline
+// réel (détourage -> composition avec fond de style -> stockage -> envoi
+// de l'image) en arrière-plan (generation_pipeline.go) : on ne bloque pas
+// la réponse au webhook sur ces appels réseau. Le résultat (image ou
+// message d'erreur) part au vendeur via un message Twilio séparé une
+// fois le pipeline terminé.
 func handleAttenteStyle(seller *Seller, body string) string {
 	choice, ok := matchStyleChoice(body)
 	if !ok {
@@ -212,17 +216,11 @@ func handleAttenteStyle(seller *Seller, body string) string {
 	}
 	seller.Draft.Style = choice
 	seller.State = StateGeneration
-	return handleGeneration(seller)
-}
 
-// handleGeneration représente le comportement de l'état GENERATION.
-// Stub pour l'instant : le traitement d'image n'est pas encore branché
-// (tickets IMG à venir) — on répond immédiatement et on remet le vendeur
-// en PRET pour qu'il puisse démarrer un nouveau produit.
-func handleGeneration(seller *Seller) string {
-	seller.State = StatePret
-	seller.Draft = nil
-	return generationStubMessage
+	photos := append([]string(nil), seller.Draft.Photos...) // copie : le brouillon peut être remis à nil pendant que le pipeline tourne
+	generationPipelineRunner(seller, photos, choice)
+
+	return generationStartedMessage
 }
 
 // addToDraft ajoute les photos (jusqu'à maxDraftPhotos) et la note texte

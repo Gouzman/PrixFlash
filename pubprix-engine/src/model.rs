@@ -5,10 +5,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 pub struct GenerateRequest {
     pub photo_urls: Vec<String>,
+    /// 0 (ou absent) = pas de prix à afficher (flux WhatsApp, avant le
+    /// ticket de génération de texte de vente). Voir generate.rs :
+    /// seule une valeur strictement positive déclenche l'overlay.
+    #[serde(default)]
     pub price: f64,
     pub name: Option<String>,
     #[allow(dead_code)] // format n'influence que la taille du canevas pour l'instant.
     pub format: String, // "whatsapp" | "facebook" | "instagram" | "story"
+    /// "white" | "color" | "scene" — fond à poser derrière chaque photo
+    /// avant la composition (voir background.rs). Absent : comportement
+    /// historique, les photos sont supposées déjà opaques.
+    #[serde(default)]
+    pub style: Option<String>,
 }
 
 /// `image_base64` contient le JPEG encodé en base64 (voir note dans
